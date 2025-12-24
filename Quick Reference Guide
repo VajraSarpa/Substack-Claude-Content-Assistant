@@ -1,0 +1,270 @@
+## 🚀 Deployment Commands
+
+### First-Time Deployment
+
+```bash
+# 1. Build
+sam build
+
+# 2. Deploy (interactive)
+sam deploy --guided
+
+# 3. Configure secrets
+./scripts/setup_secrets.sh dev sk-ant-api03-YOUR-KEY
+
+# 4. Test
+curl -X POST $(aws cloudformation describe-stacks \
+  --stack-name substack-claude-dev \
+  --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+  --output text)/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Test article", "tone": "professional", "length": "short"}'
+```
+
+### Subsequent Deployments
+
+```bash
+# Build and deploy
+sam build && sam deploy
+
+# Or for specific environment
+sam build && sam deploy --config-env prod
+```
+
+## 🧪 Testing Commands
+
+### Local Testing
+
+```bash
+# Start local API
+sam local start-api --env-vars tests/env.json
+
+# Test specific function
+sam local invoke GenerateContentFunction \
+  --event tests/fixtures/generate_event.json \
+  --env-vars tests/env.json
+
+# Use helper script
+./scripts/local_test.sh generate
+```
+
+### Unit Tests
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run with coverage
+pytest tests/ -v --cov=src --cov-report=html
+
+# Run specific test file
+pytest tests/unit/test_handlers.py -v
+```
+
+## 📊 Monitoring Commands
+
+### CloudWatch Logs
+
+```bash
+# Tail logs in real-time
+sam logs -n GenerateContentFunction --stack-name substack-claude-dev --tail
+
+# Get recent logs
+aws logs tail /aws/lambda/dev-generate-content --follow
+
+# Query with CloudWatch Insights
+aws logs start-query \
+  --log-group-name /aws/lambda/dev-generate-content \
+  --start-time $(date -d '1 hour ago' +%s) \
+  --end-time $(date +%s) \
+  --query-string 'fields @timestamp, level, message | filter level = "ERROR"'
+```
+
+### Metrics
+
+```bash
+# Lambda invocations (last 24 hours)
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/Lambda \
+  --metric-name Invocations \
+  --dimensions Name=FunctionName,Value=dev-generate-content \
+  --start-time $(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%S) \
+  --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+  --period 3600 \
+  --statistics Sum
+
+# Lambda errors
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/Lambda \
+  --metric-name Errors \
+  --dimensions Name=FunctionName,Value=dev-generate-content \
+  --start-time $(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%S) \
+  --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+  --period 3600 \
+  --statistics Sum
+```
+
+## 🔍 Debugging Commands
+
+### Check Resources
+
+```bash
+# List all stack resources
+aws cloudformation describe-stack-resources \
+  --stack-name substack-claude-dev
+
+# Get API endpoint
+aws cloudformation describe-stacks \
+  --stack-name substack-claude-dev \
+  --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+  --output text
+
+# Check Lambda function
+aws lambda get-function --function-name dev-generate-content
+
+# Check secret
+aws secretsmanager describe-secret --secret-id dev/anthropic/api-key
+
+# List S3 objects
+aws s3 ls s3://dev-substack-drafts-YOUR-ACCOUNT-ID/drafts/ --recursive
+
+# Scan DynamoDB table
+aws dynamodb scan --table-name dev-draft-metadata --limit 5
+```
+
+### Validate Configuration
+
+```bash
+# Validate SAM template
+sam validate --lint
+
+# Check Python syntax
+python -m py_compile src/**/*.py
+
+# Check imports
+python -c "from src.handlers.generate_content import lambda_handler; print('✓ Imports OK')"
+```
+
+## 💰 Cost Tracking
+
+```bash
+# Get cost estimate
+aws ce get-cost-and-usage \
+  --time-period Start=2024-12-01,End=2024-12-31 \
+  --granularity MONTHLY \
+  --metrics BlendedCost \
+  --filter file://cost-filter.json
+
+# cost-filter.json
+{
+  "Tags": {
+    "Key": "Project",
+    "Values": ["SubstackClaudeAssistant"]
+  }
+}
+
+# Set up budget alert
+aws budgets create-budget \
+  --account-id YOUR-ACCOUNT-ID \
+  --budget file://budget.json
+```
+
+## 🧹 Cleanup Commands
+
+### Delete Stack
+
+```bash
+# Delete CloudFormation stack (removes all resources)
+aws cloudformation delete-stack --stack-name substack-claude-dev
+
+# Wait for deletion
+aws cloudformation wait stack-delete-complete \
+  --stack-name substack-claude-dev
+
+# Manually delete S3 bucket (if needed)
+aws s3 rm s3://dev-substack-drafts-YOUR-ACCOUNT-ID --recursive
+aws s3 rb s3://dev-substack-drafts-YOUR-ACCOUNT-ID
+```
+
+## 📝 Common Workflows
+
+### Update Lambda Code Only
+
+```bash
+# Build and deploy (skips infrastructure changes)
+sam build && sam deploy --no-confirm-changeset
+```
+
+### Update Single Function
+
+```bash
+# Deploy specific function
+sam build GenerateContentFunction
+aws lambda update-function-code \
+  --function-name dev-generate-content \
+  --zip-file fileb://.aws-sam/build/GenerateContentFunction/function.zip
+```
+
+### Rollback Deployment
+
+```bash
+# CloudFormation automatically keeps previous versions
+aws cloudformation cancel-update-stack --stack-name substack-claude-dev
+
+# Or manually rollback
+aws cloudformation update-stack \
+  --stack-name substack-claude-dev \
+  --use-previous-template
+```
+
+## 🔐 Security Checklist
+
+- [ ] API keys stored in Secrets Manager (never in code)
+- [ ] IAM roles follow least-privilege principle
+- [ ] S3 buckets have encryption enabled
+- [ ] DynamoDB tables have encryption enabled
+- [ ] API Gateway has throttling configured
+- [ ] CloudWatch Logs have retention set
+- [ ] No secrets in git history
+- [ ] CORS configured appropriately
+
+## 📈 Performance Optimization
+
+```bash
+# Check Lambda memory utilization
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/Lambda \
+  --metric-name MemoryUtilization \
+  --dimensions Name=FunctionName,Value=dev-generate-content \
+  --start-time $(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%S) \
+  --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+  --period 3600 \
+  --statistics Average,Maximum
+
+# Right-size Lambda based on actual usage:
+# - If consistently <50% memory → decrease memory
+# - If hitting timeout → increase memory (also increases CPU)
+# - If cold starts >1s → consider Provisioned Concurrency
+```
+
+## 🎯 Interview Preparation
+
+### Demo Flow
+
+1. Show architecture diagram
+2. Explain key design decisions
+3. Deploy stack: `sam build && sam deploy`
+4. Test API: `curl -X POST ...`
+5. Show CloudWatch logs: `sam logs -n ... --tail`
+6. Explain error handling: Point out retry logic in code
+7. Discuss cost optimization: Show S3 lifecycle, ARM64, etc.
+8. Review security: Secrets Manager, IAM policies
+
+### Key Talking Points
+
+- **Well-Architected alignment** for each pillar
+- **Production patterns**: Retry logic, DLQ, structured logging
+- **Cost optimization**: ARM64, lifecycle policies, on-demand pricing
+- **Security**: Secrets Manager, least-privilege IAM, encryption
+- **Monitoring**: CloudWatch metrics, alarms, structured logs
+- **Scalability**: Serverless auto-scaling, DynamoDB capacity
